@@ -1,0 +1,3 @@
+hostname,start_utc,end_utc,comment
+PLC-SRV-01,2026-01-20T17:00:00Z,2026-01-20T22:00:00Z,patching
+AD4IOT-GW-02,2026-01-22T18:00:00Z,2026-01-22T21:00:00Z,upgrade
