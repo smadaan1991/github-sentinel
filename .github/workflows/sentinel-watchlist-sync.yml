@@ -30,7 +30,7 @@ jobs:
         run: |
           CSV_CONTENT=$(cat maintenance.csv)
 
-          API_VERSION="2025-09-01"
+          API_VERSION="2024-09-01"
           SUB="${{ vars.AZURE_SUBSCRIPTION_ID }}"
           RG="${{ vars.RG_NAME }}"
           WORKSPACE="${{ vars.WORKSPACE_NAME }}"
