@@ -34,7 +34,7 @@ jobs:
           SUB="${{ vars.AZURE_SUBSCRIPTION_ID }}"
           RG="${{ vars.RG_NAME }}"
           WORKSPACE="${{ vars.WORKSPACE_NAME }}"
-          WATCHLIST_ALIAS="maintenance_hosts"
+          WATCHLIST_ALIAS="device_maintainance_list"
 
           URL="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.OperationalInsights/workspaces/$WORKSPACE/providers/Microsoft.SecurityInsights/watchlists/$WATCHLIST_ALIAS?api-version=$API_VERSION"
 
