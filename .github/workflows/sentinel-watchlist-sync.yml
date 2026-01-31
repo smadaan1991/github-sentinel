@@ -1,0 +1,52 @@
+name: Sync Sentinel Watchlist from CSV
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - maintenance.csv
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  sync-watchlist:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Sentinel Watchlist
+        run: |
+          CSV_CONTENT=$(cat maintenance.csv)
+
+          API_VERSION="2025-09-01"
+          SUB="${{ vars.AZURE_SUBSCRIPTION_ID }}"
+          RG="${{ vars.RG_NAME }}"
+          WORKSPACE="${{ vars.WORKSPACE_NAME }}"
+          WATCHLIST_ALIAS="maintenance_hosts"
+
+          URL="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.OperationalInsights/workspaces/$WORKSPACE/providers/Microsoft.SecurityInsights/watchlists/$WATCHLIST_ALIAS?api-version=$API_VERSION"
+
+          BODY=$(jq -n --arg csv "$CSV_CONTENT" '{
+            properties: {
+              displayName: "maintenance_hosts",
+              source: "GitHub",
+              provider: "GitHub",
+              itemsSearchKey: "hostname",
+              contentType: "text/csv",
+              rawContent: $csv
+            }
+          }')
+
+          az rest --method put --url "$URL" --headers "Content-Type=application/json" --body "$BODY"
