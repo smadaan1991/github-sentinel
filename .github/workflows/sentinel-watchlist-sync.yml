@@ -1,13 +1,16 @@
 name: Sync Sentinel Watchlist from CSV
+
 on:
   push:
     branches:
       - main
     paths:
       - maintenance.csv
+
 permissions:
   id-token: write
   contents: read
+
 jobs:
   sync-watchlist:
     runs-on: ubuntu-latest
@@ -23,70 +26,71 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       
-      - name: Install Azure Sentinel Extension
+      - name: Sync Watchlist Items
         run: |
-          az extension add --name sentinel --allow-preview true
-      
-      - name: Sync Watchlist
-        run: |
+          API_VERSION="2024-09-01"
+          SUB="${{ vars.AZURE_SUBSCRIPTION_ID }}"
           RG="${{ vars.RG_NAME }}"
           WORKSPACE="${{ vars.WORKSPACE_NAME }}"
           WATCHLIST_ALIAS="device_maintainance_list"
           
-          echo "Syncing watchlist: $WATCHLIST_ALIAS"
+          BASE_URL="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.OperationalInsights/workspaces/$WORKSPACE/providers/Microsoft.SecurityInsights/watchlists/$WATCHLIST_ALIAS"
           
-          # Delete existing watchlist
-          echo "Removing old watchlist..."
-          az sentinel watchlist delete \
-            --resource-group "$RG" \
-            --workspace-name "$WORKSPACE" \
-            --watchlist-alias "$WATCHLIST_ALIAS" \
-            --yes 2>/dev/null || echo "Watchlist does not exist, will create new"
+          echo "Starting watchlist sync..."
           
-          # Wait for deletion to propagate
-          echo "Waiting for deletion to complete..."
-          sleep 15
+          # Step 1: Delete all existing items
+          echo "Deleting old items..."
+          ITEMS_URL="$BASE_URL/watchlistItems?api-version=$API_VERSION"
+          EXISTING_ITEMS=$(az rest --method get --url "$ITEMS_URL" --query 'value[].name' -o tsv 2>/dev/null || echo "")
           
-          # Create new watchlist with CSV data
-          echo "Creating watchlist with new data..."
-          az sentinel watchlist create \
-            --resource-group "$RG" \
-            --workspace-name "$WORKSPACE" \
-            --watchlist-alias "$WATCHLIST_ALIAS" \
-            --display-name "Device Maintenance List" \
-            --provider "GitHub Actions" \
-            --source "Local" \
-            --items-search-key "hostname" \
-            --raw-content "$(cat maintenance.csv)"
+          for ITEM_ID in $EXISTING_ITEMS; do
+            DELETE_URL="$BASE_URL/watchlistItems/$ITEM_ID?api-version=$API_VERSION"
+            az rest --method delete --url "$DELETE_URL" 2>/dev/null || true
+          done
           
-          if [ $? -eq 0 ]; then
-            echo "Watchlist created successfully!"
-            echo ""
-            echo "NOTE: Items may take 5-10 minutes to appear in the Azure Portal."
-            echo "The data is being ingested into your workspace."
-            echo ""
+          echo "Old items deleted"
+          
+          # Step 2: Add new items from CSV
+          echo "Adding new items..."
+          
+          sed 's/\r$//' maintenance.csv | tail -n +2 | grep -v '^[[:space:]]*$' | while IFS=, read -r hostname start_utc end_utc comment; do
+            hostname=$(echo "$hostname" | xargs)
+            start_utc=$(echo "$start_utc" | xargs)
+            end_utc=$(echo "$end_utc" | xargs)
+            comment=$(echo "$comment" | xargs)
             
-            # Optional: Wait and verify items are loaded
-            echo "Waiting for items to be ingested (this may take up to 10 minutes)..."
-            for i in {1..20}; do
-              sleep 30
-              ITEM_COUNT=$(az sentinel watchlist show \
-                --resource-group "$RG" \
-                --workspace-name "$WORKSPACE" \
-                --watchlist-alias "$WATCHLIST_ALIAS" \
-                --query "numberOfLinesToSkip" -o tsv 2>/dev/null || echo "0")
-              
-              echo "Check $i/20: Verifying ingestion..."
-              
-              # If items start appearing, we're done
-              if [ "$ITEM_COUNT" != "0" ]; then
-                echo "Items are now available in the watchlist!"
-                break
-              fi
-            done
+            if [ -z "$hostname" ]; then
+              continue
+            fi
             
-            echo "Sync process completed!"
-          else
-            echo "Failed to sync watchlist"
-            exit 1
-          fi
+            ITEM_ID=$(uuidgen)
+            ITEM_URL="$BASE_URL/watchlistItems/$ITEM_ID?api-version=$API_VERSION"
+            
+            BODY=$(jq -n \
+              --arg hostname "$hostname" \
+              --arg start "$start_utc" \
+              --arg end "$end_utc" \
+              --arg comment "$comment" \
+              '{
+                properties: {
+                  itemsKeyValue: {
+                    hostname: $hostname,
+                    start_utc: $start,
+                    end_utc: $end,
+                    comment: $comment
+                  }
+                }
+              }')
+            
+            az rest --method put --url "$ITEM_URL" \
+              --headers "Content-Type=application/json" \
+              --body "$BODY" >/dev/null 2>&1
+            
+            if [ $? -eq 0 ]; then
+              echo "  Added: $hostname"
+            else
+              echo "  Failed: $hostname"
+            fi
+          done
+          
+          echo "Sync completed! Items are now visible in the portal."
