@@ -35,13 +35,17 @@ jobs:
           
           echo "Syncing watchlist: $WATCHLIST_ALIAS"
           
-          # Delete existing watchlist (this deletes all items too)
+          # Delete existing watchlist
           echo "Removing old watchlist..."
           az sentinel watchlist delete \
             --resource-group "$RG" \
             --workspace-name "$WORKSPACE" \
             --watchlist-alias "$WATCHLIST_ALIAS" \
             --yes 2>/dev/null || echo "Watchlist does not exist, will create new"
+          
+          # Wait for deletion to propagate
+          echo "Waiting for deletion to complete..."
+          sleep 15
           
           # Create new watchlist with CSV data
           echo "Creating watchlist with new data..."
@@ -56,7 +60,32 @@ jobs:
             --raw-content "$(cat maintenance.csv)"
           
           if [ $? -eq 0 ]; then
-            echo "Watchlist synced successfully!"
+            echo "Watchlist created successfully!"
+            echo ""
+            echo "NOTE: Items may take 5-10 minutes to appear in the Azure Portal."
+            echo "The data is being ingested into your workspace."
+            echo ""
+            
+            # Optional: Wait and verify items are loaded
+            echo "Waiting for items to be ingested (this may take up to 10 minutes)..."
+            for i in {1..20}; do
+              sleep 30
+              ITEM_COUNT=$(az sentinel watchlist show \
+                --resource-group "$RG" \
+                --workspace-name "$WORKSPACE" \
+                --watchlist-alias "$WATCHLIST_ALIAS" \
+                --query "numberOfLinesToSkip" -o tsv 2>/dev/null || echo "0")
+              
+              echo "Check $i/20: Verifying ingestion..."
+              
+              # If items start appearing, we're done
+              if [ "$ITEM_COUNT" != "0" ]; then
+                echo "Items are now available in the watchlist!"
+                break
+              fi
+            done
+            
+            echo "Sync process completed!"
           else
             echo "Failed to sync watchlist"
             exit 1
