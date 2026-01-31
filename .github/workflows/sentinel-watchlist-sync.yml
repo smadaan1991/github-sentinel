@@ -41,6 +41,7 @@ jobs:
           BODY=$(jq -n --arg csv "$CSV_CONTENT" '{
             properties: {
               displayName: "device_maintainance_list",
+              itemsSearchKey: "hostname",
               source: "GitHub",
               provider: "GitHub",
               contentType: "text/csv",
