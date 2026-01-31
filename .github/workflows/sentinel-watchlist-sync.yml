@@ -1,16 +1,13 @@
 name: Sync Sentinel Watchlist from CSV
-
 on:
   push:
     branches:
       - main
     paths:
       - maintenance.csv
-
 permissions:
   id-token: write
   contents: read
-
 jobs:
   sync-watchlist:
     runs-on: ubuntu-latest
@@ -26,62 +23,41 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       
-      - name: Complete Watchlist Sync
+      - name: Install Azure Sentinel Extension
         run: |
-          API_VERSION="2024-09-01"
-          SUB="${{ vars.AZURE_SUBSCRIPTION_ID }}"
+          az extension add --name sentinel --allow-preview true
+      
+      - name: Sync Watchlist
+        run: |
           RG="${{ vars.RG_NAME }}"
           WORKSPACE="${{ vars.WORKSPACE_NAME }}"
           WATCHLIST_ALIAS="device_maintainance_list"
           
-          BASE_URL="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.OperationalInsights/workspaces/$WORKSPACE/providers/Microsoft.SecurityInsights/watchlists/$WATCHLIST_ALIAS"
+          echo "Syncing watchlist: $WATCHLIST_ALIAS"
           
-          # Step 1: Get existing items and delete all
-          echo "🗑️ Deleting all existing items..."
-          ITEMS_URL="$BASE_URL/watchlistItems?api-version=$API_VERSION"
-          EXISTING_ITEMS=$(az rest --method get --url "$ITEMS_URL" --query 'value[].name' -o tsv 2>/dev/null || echo "")
+          # Delete existing watchlist (this deletes all items too)
+          echo "Removing old watchlist..."
+          az sentinel watchlist delete \
+            --resource-group "$RG" \
+            --workspace-name "$WORKSPACE" \
+            --watchlist-alias "$WATCHLIST_ALIAS" \
+            --yes 2>/dev/null || echo "Watchlist does not exist, will create new"
           
-          for ITEM_ID in $EXISTING_ITEMS; do
-            echo "  Deleting: $ITEM_ID"
-            DELETE_URL="$BASE_URL/watchlistItems/$ITEM_ID?api-version=$API_VERSION"
-            az rest --method delete --url "$DELETE_URL" 2>/dev/null || true
-          done
+          # Create new watchlist with CSV data
+          echo "Creating watchlist with new data..."
+          az sentinel watchlist create \
+            --resource-group "$RG" \
+            --workspace-name "$WORKSPACE" \
+            --watchlist-alias "$WATCHLIST_ALIAS" \
+            --display-name "Device Maintenance List" \
+            --provider "GitHub Actions" \
+            --source "Local" \
+            --items-search-key "hostname" \
+            --raw-content "$(cat maintenance.csv)"
           
-          # Step 2: Add items from CSV with proper GUID
-          echo "📝 Updating items from CSV..."
-          tail -n +2 maintenance.csv | while IFS=, read -r hostname start_utc end_utc comment; do
-            # Generate proper UUID/GUID for each item
-            ITEM_ID=$(uuidgen)
-            
-            echo "  Processing: $hostname (ID: $ITEM_ID)"
-            
-            ITEM_URL="$BASE_URL/watchlistItems/$ITEM_ID?api-version=$API_VERSION"
-            
-            BODY=$(jq -n \
-              --arg hostname "$hostname" \
-              --arg start "$start_utc" \
-              --arg end "$end_utc" \
-              --arg comment "$comment" \
-              '{
-                properties: {
-                  itemsKeyValue: {
-                    hostname: $hostname,
-                    start_utc: $start,
-                    end_utc: $end,
-                    comment: $comment
-                  }
-                }
-              }')
-            
-            az rest --method put --url "$ITEM_URL" \
-              --headers "Content-Type=application/json" \
-              --body "$BODY"
-            
-            if [ $? -eq 0 ]; then
-              echo "    ✅ Added: $hostname"
-            else
-              echo "    ❌ Failed: $hostname"
-            fi
-          done
-          
-          echo "🎉 Sync completed!"
+          if [ $? -eq 0 ]; then
+            echo "Watchlist synced successfully!"
+          else
+            echo "Failed to sync watchlist"
+            exit 1
+          fi
