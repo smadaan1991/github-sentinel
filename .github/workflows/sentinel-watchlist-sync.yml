@@ -40,10 +40,8 @@ jobs:
 
           BODY=$(jq -n --arg csv "$CSV_CONTENT" '{
             properties: {
-              displayName: "maintenance_hosts",
               source: "GitHub",
               provider: "GitHub",
-              itemsSearchKey: "hostname",
               contentType: "text/csv",
               rawContent: $csv
             }
