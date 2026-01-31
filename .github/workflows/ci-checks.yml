@@ -1,0 +1,33 @@
+name: CI Checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'maintenance.csv'
+      - '.github/workflows/*.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Validate CSV
+        run: |
+          echo "Checking CSV format..."
+          head -n 1 maintenance.csv | grep -q "hostname,start_utc,end_utc,comment"
+          echo "CSV validation passed"
+      
+      - name: Lint YAML
+        run: |
+          pip install yamllint
+          yamllint .github/workflows/
+          echo "YAML lint passed"
+      
+      - name: Security Scan
+        run: |
+          echo "Scanning for secrets..."
+          ! grep -r "AKIA\|sk-\|password" . --exclude-dir=.git
+          echo "Security scan passed"
